@@ -1,0 +1,126 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+import 'package:fluttertoast/fluttertoast.dart';
+import 'package:intl/intl.dart';
+import 'package:mailer/mailer.dart';
+import 'package:mailer/smtp_server/gmail.dart';
+
+class AttendanceScreen extends StatefulWidget {
+  @override
+  _AttendanceScreenState createState() => _AttendanceScreenState();
+}
+
+class _AttendanceScreenState extends State<AttendanceScreen> {
+  final _auth = FirebaseAuth.instance;
+  final _firestore = FirebaseFirestore.instance;
+  final _selectedStudents = <String>{};
+
+  void toggleSelection(String student) {
+    setState(() {
+      if (_selectedStudents.contains(student)) {
+        _selectedStudents.remove(student);
+      } else {
+        _selectedStudents.add(student);
+      }
+    });
+  }
+
+  void saveAttendance() async {
+    final user = _auth.currentUser;
+    final date = DateFormat('yyyy-MM-dd').format(DateTime.now());
+    final attendanceRef =
+        _firestore.collection('attendance').doc(user!.uid).collection(date);
+
+    try {
+      await attendanceRef.doc('data').set({
+        'present': _selectedStudents.toList(),
+      });
+      Fluttertoast.showToast(msg: 'Attendance saved successfully.');
+    } catch (e) {
+      print(e);
+      Fluttertoast.showToast(
+          msg:
+              'An error occurred while saving attendance. Please try again later.');
+    }
+  }
+
+  void sendAttendanceReport() async {
+    final user = _auth.currentUser;
+    final date = DateFormat('yyyy-MM-dd').format(DateTime.now());
+    final attendanceRef =
+        _firestore.collection('attendance').doc(user!.uid).collection(date);
+
+    try {
+      final attendanceData = await attendanceRef.get();
+      final presentStudents = attendanceData.docs.first.get('present');
+      final presentStudentsList = presentStudents.join('\n');
+      final emailBody =
+          'Attendance Report for ${DateFormat('dd MMM yyyy').format(DateTime.now())}\n\nPresent Students:\n$presentStudentsList';
+      final smtpServer = gmail('your_email@gmail.com', 'your_password');
+      final message = Message()
+        ..from = Address('your_email@gmail.com', 'Attendance App')
+        ..recipients.add('recipient_email@example.com')
+        ..subject =
+            'Attendance Report - ${DateFormat('dd MMM yyyy').format(DateTime.now())}'
+        ..text = emailBody;
+      final sendReport = await send(message, smtpServer);
+      Fluttertoast.showToast(msg: 'Attendance report sent successfully.');
+    } catch (e) {
+      print(e);
+      Fluttertoast.showToast(
+          msg:
+              'An error occurred while sending attendance report. Please try again later.');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final user = _auth.currentUser;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Attendance'),
+        actions: <Widget>[
+          IconButton(
+            icon: Icon(Icons.send),
+            onPressed: sendAttendanceReport,
+          ),
+        ],
+      ),
+      body: StreamBuilder<QuerySnapshot>(
+        stream: _firestore.collection('students').snapshots(),
+        builder: (context, snapshot) {
+          if (!snapshot.hasData) {
+            return Center(
+              child: CircularProgressIndicator(),
+            );
+          }
+
+          final students =
+              snapshot.data!.docs.map((doc) => doc['name']).toList();
+
+          return ListView.builder(
+            itemCount: students.length,
+            itemBuilder: (context, index) {
+              final student = students[index];
+              final isSelected = _selectedStudents.contains(student);
+
+              return ListTile(
+                title: Text(student),
+                trailing: Checkbox(
+                  value: isSelected,
+                  onChanged: (value) => toggleSelection(student),
+                  ),
+                );
+              },
+            );
+           },
+         ),
+          floatingActionButton: FloatingActionButton(
+          onPressed: saveAttendance,
+          child: Icon(Icons.save),
+           ),
+          );
+      }
+}
